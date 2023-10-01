@@ -1,123 +1,177 @@
-// Basic demo for readings from Adafruit BNO08x
 #include <Adafruit_BNO08x.h>
+#include <SD.h>
+#include <SPI.h>
 
 
-// For SPI mode, we also need a RESET 
-//#define BNO08X_RESET 5
-// but not for I2C or UART
-//#define BNO08X_RESET -1
-
-//Adafruit_BNO08x  bno08x(BNO08X_RESET);
-Adafruit_BNO08x  bno08x;
+#define BNO08X_RESET -1
+#define PY1 2
+#define PY2 3
+#define PIN_SWITCH 4
+#define BUZZER 7
+Adafruit_BNO08x bno08x(BNO08X_RESET);
 sh2_SensorValue_t sensorValue;
 
-//Setup struct for sensor data
-struct sensor_data {
-	float accelerometer[3] = { 0 };  // [ax, ay, az]
-	float magnetometer[3] = { 0 };   // [mx, my, mz]
-	float gyroscope[3] = { 0 };      // [gx, gy, gz]
-	float acc_linear[3] = { 0 };
-	float rotation_vector[4] = { 0 };  // [w, x, y, z]
-};
 
-void setup(void) {
-	Serial.begin(115200);
-	while (!Serial) delay(10);     // will pause Zero, Leonardo, etc until serial console opens
+struct {
+    int time;
+    float accelerometer[3];  // [ax, ay, az]
+    float magnetometer[3];   // [mx, my, mz]
+    float gyroscope[3];      // [gx, gy, gz]
+    float acc_linear[3];     // [ax, ay, az]
+    float rotation_vector[4];  // [real, i, j, k]
+    float acc_linear_total; 	// sqrt(ax^2 + ay^2 + az^2)
+    float acc_linear_samples;
+    float acc_linear_total_avg_100; // average of the last 100 linear_total values
+}sensor_data;
 
-	Serial.println("Adafruit BNO08x test!");
-	//pinMode(18, INPUT_PULLUP);
-	//pinMode(19, INPUT_PULLUP);
+int state = 0;
+File dataFile;
 
-	// Try to initialize!
-	if (!bno08x.begin_I2C()) {
-		//if (!bno08x.begin_UART(&Serial1)) {  // Requires a device with > 300 byte UART buffer!
-		//if (!bno08x.begin_SPI(BNO08X_CS, BNO08X_INT)) {
-		Serial.println("Failed to find BNO08x chip");
-		while (1) { delay(10); }
-	}
-	Serial.println("BNO08x Found!");
+void setup() {
+    Serial.begin(115200);
+    //while (!Serial)
+    //  delay(10); // will pause Zero, Leonardo, etc until serial console opens
 
-	setReports();
+    Serial.println("Adafruit BNO08x test!");
 
-	Serial.println("Reading events");
-	delay(100);
+    // Try to initialize!
+    if (!bno08x.begin_I2C()) {
+        // if (!bno08x.begin_UART(&Serial1)) {  // Requires a device with > 300 byte
+        // UART buffer! if (!bno08x.begin_SPI(BNO08X_CS, BNO08X_INT)) {
+        Serial.println("Failed to find BNO08x chip");
+        while (1) {
+            delay(10);
+        }
+    }
+    Serial.println("BNO08x Found!");
+
+    setReports();
+
+    Serial.println("Reading events");
+
+    if (!SD.begin(BUILTIN_SDCARD)) {
+        Serial.println("SD card initialization failed!");
+        while (1);
+    }
+
+    // put your setup code here, to run once:
+    pinMode(PY1, OUTPUT);
+    pinMode(PY2, OUTPUT);
+    pinMode(PIN_SWITCH, OUTPUT);
+    pinMode(BUZZER, OUTPUT);
+
 }
 
-// Here is where you define the sensor outputs you want to receive
 void setReports(void) {
-	Serial.println("Setting desired reports");
-	if (!bno08x.enableReport(SH2_ACCELEROMETER)) {
-		Serial.println("Could not enable accelerometer");
-	}
-	if (!bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED)) {
-		Serial.println("Could not enable gyroscope");
-	}
-	if (!bno08x.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED)) {
-		Serial.println("Could not enable magnetic field calibrated");
-	}
-	if (!bno08x.enableReport(SH2_LINEAR_ACCELERATION)) {
-		Serial.println("Could not enable linear acceleration");
-	}
-	if (!bno08x.enableReport(SH2_GRAVITY)) {
-		Serial.println("Could not enable gravity vector");
-	}
-	if (!bno08x.enableReport(SH2_ROTATION_VECTOR)) {
-		Serial.println("Could not enable rotation vector");
-	}
-	if (!bno08x.enableReport(SH2_STEP_COUNTER)) {
-		Serial.println("Could not enable step counter");
-	}
-	if (!bno08x.enableReport(SH2_STABILITY_CLASSIFIER)) {
-		Serial.println("Could not enable stability classifier");
-	}
-	if (!bno08x.enableReport(SH2_RAW_ACCELEROMETER)) {
-		Serial.println("Could not enable raw accelerometer");
-	}
-	if (!bno08x.enableReport(SH2_RAW_GYROSCOPE)) {
-		Serial.println("Could not enable raw gyroscope");
-	}
-	if (!bno08x.enableReport(SH2_RAW_MAGNETOMETER)) {
-		Serial.println("Could not enable raw magnetometer");
-	}
+    Serial.println("Setting desired reports");
+    if (!bno08x.enableReport(SH2_ACCELEROMETER)) {
+        Serial.println("Could not enable accelerometer");
+    }
+    if (!bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED)) {
+        Serial.println("Could not enable gyroscope");
+    }
+    if (!bno08x.enableReport(SH2_MAGNETIC_FIELD_CALIBRATED)) {
+        Serial.println("Could not enable magnetic field calibrated");
+    }
+    if (!bno08x.enableReport(SH2_LINEAR_ACCELERATION)) {
+        Serial.println("Could not enable linear acceleration");
+    }
+    if (!bno08x.enableReport(SH2_ROTATION_VECTOR)) {
+        Serial.println("Could not enable rotation vector");
+    }
 }
 
+void write_sensor_data() {
+    Serial.println("write_sensor_data");
+    if (dataFile) {
+        // Append values to the 'out' string with commas
+        String out = String(sensor_data.time) + ","
+            + String(sensor_data.accelerometer[0]) + ","
+            + String(sensor_data.accelerometer[1]) + ","
+            + String(sensor_data.accelerometer[2]) + ","
+            + String(sensor_data.magnetometer[0]) + ","
+            + String(sensor_data.magnetometer[1]) + ","
+            + String(sensor_data.magnetometer[2]) + ","
+            + String(sensor_data.gyroscope[0]) + ","
+            + String(sensor_data.gyroscope[1]) + ","
+            + String(sensor_data.gyroscope[2]) + ","
+            + String(sensor_data.acc_linear[0]) + ","
+            + String(sensor_data.acc_linear[1]) + ","
+            + String(sensor_data.acc_linear[2]) + ","
+            + String(sensor_data.rotation_vector[0]) + ","
+            + String(sensor_data.rotation_vector[1]) + ","
+            + String(sensor_data.rotation_vector[2]) + ","
+            + String(sensor_data.rotation_vector[3]);
 
+        // Write the 'out' string to the file
+        dataFile.println(out);
+    }
+
+}
 
 //update sensor data
-void update_sensor_data(struct sensor_data* data) {
-	switch (sensorValue.sensorId) {
-	case SH2_ACCELEROMETER:
-		//update accelerometer data
-		data->accelerometer[0] = sensorValue.un.accelerometer.x;
-		data->accelerometer[1] = sensorValue.un.accelerometer.y;
-		data->accelerometer[2] = sensorValue.un.accelerometer.z;
-		break;
-	case SH2_MAGNETIC_FIELD_CALIBRATED:
-		//update magnetometer data
-		data->magnetometer[0] = sensorValue.un.magnetometer.x;
-		data->magnetometer[1] = sensorValue.un.magnetometer.y;
-		data->magnetometer[2] = sensorValue.un.magnetometer.z;
-		break;
-	case SH2_GYROSCOPE_CALIBRATED:
-		//update gyroscope data
-		data->gyroscope[0] = sensorValue.un.gyroscope.x;
-		data->gyroscope[1] = sensorValue.un.gyroscope.y;
-		data->gyroscope[2] = sensorValue.un.gyroscope.z;
-		break;
-	case SH2_LINEAR_ACCELERATION:
-		//update linear acceleration data
-		data->acc_linear[0] = sensorValue.un.linear_acceleration.x;
-		data->acc_linear[1] = sensorValue.un.linear_acceleration.y;
-		data->acc_linear[2] = sensorValue.un.linear_acceleration.z;
-		break;
-	case SH2_ROTATION_VECTOR:
-		//update rotation vector data
-		data->rotation_vector[0] = sensorValue.un.rotation_vector.w;
-		data->rotation_vector[1] = sensorValue.un.rotation_vector.x;
-		data->rotation_vector[2] = sensorValue.un.rotation_vector.y;
-		data->rotation_vector[3] = sensorValue.un.rotation_vector.z;
-		break;
-	}
+void update_sensor_data() {
+    if (bno08x.wasReset()) {
+        Serial.print("sensor was reset ");
+        setReports();
+    }
+
+    if (!bno08x.getSensorEvent(&sensorValue)) {
+        return;
+    }
+    sensor_data.time = millis();
+    switch (sensorValue.sensorId) {
+    case SH2_ACCELEROMETER:
+        //update accelerometer data
+        sensor_data.accelerometer[0] = sensorValue.un.accelerometer.x;
+        sensor_data.accelerometer[1] = sensorValue.un.accelerometer.y;
+        sensor_data.accelerometer[2] = sensorValue.un.accelerometer.z;
+        break;
+    case SH2_MAGNETIC_FIELD_CALIBRATED:
+        //update magnetometer data
+        sensor_data.magnetometer[0] = sensorValue.un.magneticField.x;
+        sensor_data.magnetometer[1] = sensorValue.un.magneticField.y;
+        sensor_data.magnetometer[2] = sensorValue.un.magneticField.z;
+        break;
+    case SH2_GYROSCOPE_CALIBRATED:
+        //update gyroscope data
+        sensor_data.gyroscope[0] = sensorValue.un.gyroscope.x;
+        sensor_data.gyroscope[1] = sensorValue.un.gyroscope.y;
+        sensor_data.gyroscope[2] = sensorValue.un.gyroscope.z;
+        break;
+    case SH2_LINEAR_ACCELERATION:
+        //update linear acceleration data
+        sensor_data.acc_linear[0] = sensorValue.un.linearAcceleration.x;
+        sensor_data.acc_linear[1] = sensorValue.un.linearAcceleration.y;
+        sensor_data.acc_linear[2] = sensorValue.un.linearAcceleration.z;
+        break;
+    case SH2_ROTATION_VECTOR:
+        //update rotation vector data
+        sensor_data.rotation_vector[0] = sensorValue.un.rotationVector.real;
+        sensor_data.rotation_vector[1] = sensorValue.un.rotationVector.i;
+        sensor_data.rotation_vector[2] = sensorValue.un.rotationVector.j;
+        sensor_data.rotation_vector[3] = sensorValue.un.rotationVector.k;
+        break;
+    }
+
+    //Calculate total linear acceleration
+    sensor_data.linear_total = sqrt(pow(sensor_data.acc_linear[0], 2) + pow(sensor_data.acc_linear[1], 2) + pow(sensor_data.acc_linear[2], 2));
+    //Calculate average of 100 samples of linear acceleration
+    //if less than 100 samples, append to array
+    //if 100 samples, delete first element and append to array
+    //sizeof(sensor_data.acc_linear_samples) = length of sensor_data.linear
+
+    int samples = sizeof(sensor_data.acc_linear_samples);
+    if (sizeof(sensor_data.acc_linear_samples) < 100) {
+        sensor_data.acc_linear_samples[samples] = sensor_data.linear_total;
+    }
+    else {
+        for (int i = 0; i < sizeof(sensor_data.acc_linear_samples) - 1; i++) {
+            sensor_data.acc_linear_samples[i] = sensor_data.acc_linear_samples[i + 1];
+        }
+        sensor_data.acc_linear_samples[sizeof(sensor_data.acc_linear_samples) - 1] = sensor_data.linear_total;
+    }
+
 }
 
 
@@ -127,6 +181,8 @@ void loop() {
 	switch (state) {
 		case 0:
 			//State 0: Idle
+			//Check if moving (restarted in flight)
+
 			//Check if the button is pressed
 			if (1 == 1) {
 				//Button is pressed, go to state 1

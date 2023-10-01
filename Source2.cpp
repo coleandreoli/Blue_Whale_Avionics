@@ -17,8 +17,11 @@ struct {
     float accelerometer[3];  // [ax, ay, az]
     float magnetometer[3];   // [mx, my, mz]
     float gyroscope[3];      // [gx, gy, gz]
-    float acc_linear[3];
+    float acc_linear[3];     // [ax, ay, az]
     float rotation_vector[4];  // [real, i, j, k]
+    float acc_linear_total; 	// sqrt(ax^2 + ay^2 + az^2)
+    float acc_linear_total_samples[100];  //array of 100 samples
+    float acc_linear_total_avg; // average of the last 100 linear_total values
 }sensor_data;
 
 int state = 0;
@@ -150,6 +153,23 @@ void update_sensor_data() {
         sensor_data.rotation_vector[3] = sensorValue.un.rotationVector.k;
         break;
     }
+
+    //Calculate total linear acceleration
+    sensor_data.acc_linear_total = sqrt(pow(sensor_data.acc_linear[0], 2) + pow(sensor_data.acc_linear[1], 2) + pow(sensor_data.acc_linear[2], 2));
+
+    //Calculate a moving average of the last 100 linear acceleration total values
+    //shift all values in the array to the left
+    for (int i = 0; i < 99; i++) {
+		sensor_data.acc_linear_total_samples[i] = sensor_data.acc_linear_total_samples[i + 1];
+	}
+    //add the new value to the end of the array
+	sensor_data.acc_linear_total_samples[99] = sensor_data.acc_linear_total;
+	//calculate the average of the array
+	sensor_data.acc_linear_total_avg = 0;
+    for (int i = 0; i < 100; i++) {
+		sensor_data.acc_linear_total_avg += sensor_data.acc_linear_total_samples[i];
+	}
+	sensor_data.acc_linear_total_avg = sensor_data.acc_linear_total_avg / 100;
 }
 
 
@@ -175,10 +195,12 @@ void loop() {
         break;
     case 1:
         //Write sensor data to file
-        Serial.println("Updating Sensor data and writing");
+        //Serial.println("Updating Sensor data and writing");
         update_sensor_data();
-        write_sensor_data();
-        if (sensor_data.time > 60000) {
+        //write_sensor_data();
+        Serial.println(sensor_data.acc_linear_total_avg);
+
+        if (sensor_data.time > 10000) {
             state = 2;
         }
 
