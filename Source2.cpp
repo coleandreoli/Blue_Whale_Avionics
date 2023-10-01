@@ -78,6 +78,33 @@ void setReports(void) {
     }
 }
 
+void write_sensor_data() {
+    Serial.println("write_sensor_data");
+    if (dataFile) {
+        // Append values to the 'out' string with commas
+        String out = String(sensor_data.time) + ","
+            + String(sensor_data.accelerometer[0]) + ","
+            + String(sensor_data.accelerometer[1]) + ","
+            + String(sensor_data.accelerometer[2]) + ","
+            + String(sensor_data.magnetometer[0]) + ","
+            + String(sensor_data.magnetometer[1]) + ","
+            + String(sensor_data.magnetometer[2]) + ","
+            + String(sensor_data.gyroscope[0]) + ","
+            + String(sensor_data.gyroscope[1]) + ","
+            + String(sensor_data.gyroscope[2]) + ","
+            + String(sensor_data.acc_linear[0]) + ","
+            + String(sensor_data.acc_linear[1]) + ","
+            + String(sensor_data.acc_linear[2]) + ","
+            + String(sensor_data.rotation_vector[0]) + ","
+            + String(sensor_data.rotation_vector[1]) + ","
+            + String(sensor_data.rotation_vector[2]) + ","
+            + String(sensor_data.rotation_vector[3]);
+
+        // Write the 'out' string to the file
+        dataFile.println(out);
+    }
+
+}
 
 //update sensor data
 void update_sensor_data() {
@@ -150,27 +177,7 @@ void loop() {
         //Write sensor data to file
         Serial.println("Updating Sensor data and writing");
         update_sensor_data();
-        if (dataFile) {
-            //Make compile data to string
-            str out = sensor_data.time + "," 
-                + sensor_data.accelerometer[0] + "," 
-                + sensor_data.accelerometer[1] + "," 
-                + sensor_data.accelerometer[2] + "," 
-                + sensor_data.magnetometer[0] + "," 
-                + sensor_data.magnetometer[1] + "," 
-                + sensor_data.magnetometer[2] + "," 
-                + sensor_data.gyroscope[0] + "," 
-                + sensor_data.gyroscope[1] + "," 
-                + sensor_data.gyroscope[2] + "," 
-                + sensor_data.acc_linear[0] + "," 
-                + sensor_data.acc_linear[1] + "," 
-                + sensor_data.acc_linear[2] + "," 
-                + sensor_data.rotation_vector[0] + "," 
-                + sensor_data.rotation_vector[1] + "," 
-                + sensor_data.rotation_vector[2] + "," 
-                + sensor_data.rotation_vector[3];
-            dataFile.println(out);
-        }
+        write_sensor_data();
         if (sensor_data.time > 60000) {
             state = 2;
         }
