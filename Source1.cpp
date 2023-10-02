@@ -20,11 +20,12 @@ struct {
     float acc_linear[3];     // [ax, ay, az]
     float rotation_vector[4];  // [real, i, j, k]
     float acc_linear_total; 	// sqrt(ax^2 + ay^2 + az^2)
-    float acc_linear_samples;
-    float acc_linear_total_avg_100; // average of the last 100 linear_total values
+    float acc_linear_total_samples[100];  //array of 100 samples
+    float acc_linear_total_avg; // average of the last 100 linear_total values
 }sensor_data;
 
 int state = 0;
+int launch_state = 0;
 File dataFile;
 
 void setup() {
@@ -57,8 +58,11 @@ void setup() {
     // put your setup code here, to run once:
     pinMode(PY1, OUTPUT);
     pinMode(PY2, OUTPUT);
-    pinMode(PIN_SWITCH, OUTPUT);
+    pinMode(PIN_SWITCH, INPUT);
     pinMode(BUZZER, OUTPUT);
+
+    //Open a new file
+    dataFile = SD.open("data.csv", FILE_WRITE);
 
 }
 
@@ -155,37 +159,39 @@ void update_sensor_data() {
     }
 
     //Calculate total linear acceleration
-    sensor_data.linear_total = sqrt(pow(sensor_data.acc_linear[0], 2) + pow(sensor_data.acc_linear[1], 2) + pow(sensor_data.acc_linear[2], 2));
-    //Calculate average of 100 samples of linear acceleration
-    //if less than 100 samples, append to array
-    //if 100 samples, delete first element and append to array
-    //sizeof(sensor_data.acc_linear_samples) = length of sensor_data.linear
+    sensor_data.acc_linear_total = sqrt(pow(sensor_data.acc_linear[0], 2) + pow(sensor_data.acc_linear[1], 2) + pow(sensor_data.acc_linear[2], 2));
 
-    int samples = sizeof(sensor_data.acc_linear_samples);
-    if (sizeof(sensor_data.acc_linear_samples) < 100) {
-        sensor_data.acc_linear_samples[samples] = sensor_data.linear_total;
+    //Calculate a moving average of the last 100 linear acceleration total values
+    //shift all values in the array to the left
+    for (int i = 0; i < 99; i++) {
+        sensor_data.acc_linear_total_samples[i] = sensor_data.acc_linear_total_samples[i + 1];
     }
-    else {
-        for (int i = 0; i < sizeof(sensor_data.acc_linear_samples) - 1; i++) {
-            sensor_data.acc_linear_samples[i] = sensor_data.acc_linear_samples[i + 1];
-        }
-        sensor_data.acc_linear_samples[sizeof(sensor_data.acc_linear_samples) - 1] = sensor_data.linear_total;
+    //add the new value to the end of the array
+    sensor_data.acc_linear_total_samples[99] = sensor_data.acc_linear_total;
+    //calculate the average of the array
+    sensor_data.acc_linear_total_avg = 0;
+    for (int i = 0; i < 100; i++) {
+        sensor_data.acc_linear_total_avg += sensor_data.acc_linear_total_samples[i];
     }
-
+    sensor_data.acc_linear_total_avg = sensor_data.acc_linear_total_avg / 100;
 }
 
-
 void loop() {
+    //Update sensor data
+    update_sensor_data();
 
+    //Write sensor data to SD card if state > 0 and != 9
+    if (state > 0 && state != 9) {
+		write_sensor_data();
+	}
 	//State Machine
 	switch (state) {
 		case 0:
 			//State 0: Idle
-			//Check if moving (restarted in flight)
-
 			//Check if the button is pressed
 			if (1 == 1) {
 				//Button is pressed, go to state 1
+                delay(1000);
 				state = 1;
 			}
 			break;
@@ -195,34 +201,40 @@ void loop() {
 			if (1 == 1) {
 				//Button is still pressed, go to state 2
 				state = 2;
+
 				//Beep 3 times to indicate that the rocket is armed
-				for (int i = 0; i < 3; i++) {
-					digitalWrite(BUZZER_PIN, HIGH);
-					delay(100);
-					digitalWrite(BUZZER_PIN, LOW);
-					delay(100);
-				}
-				//Start Data Logging
+                tone(BUZZER, 1000);
+                delay(50);
+                noTone(BUZZER);
+                delay(50);
+                tone(BUZZER, 1000);
+                delay(50);
+                noTone(BUZZER);
+                delay(50);
+                tone(BUZZER, 1000);
+                delay(50);
+                noTone(BUZZER);
+                
 				//Start Timer
-				int time_at_launch = milis();
+				int time_at_launch = millis();
+                break;
 			}
 			else {
 				//Button is not pressed anymore, go back to state 0
 				state = 0;
 				//One long Beep to indicate that the rocket is not armed
-				digitalWrite(BUZZER_PIN, HIGH);
+                tone(BUZZER, 400);
 				delay(1000);
-				digitalWrite(BUZZER_PIN, LOW);
+                noTone(BUZZER);
 			}
 			break;
 		case 2:
 			//State 2: Launch Detect
-			sum = ;
-			if sum > 2 {
+			if sensor_data.acc_linear_total_avg > 20 {
 				//Launch Detected, go to state 3
 				state = 3;
 			}
-			break;
+            break;
 		case 3:
 			//State 3: Detecting Apogee
 			//Check if 16 seconds have passed
@@ -233,63 +245,82 @@ void loop() {
 			}
 			switch (launch_state) {
 				case 0:
-					//Launch State 0: Detecting Apogee
-					//Check if the acceleration is negative
-					if (acc_linear[0] + acc_linear[1] + acc_linear[2] < 0) {
-						//Acceleration is negative, go to Launch State 1
-						launch_state = 1;
+					//Launch State 0: No control for 5 seconds
+                    if (time_at_launch - sensor_data.time > 5000) {
+                        launch_state = 1;
+					}
+                    break;
+                case 1:
+					//Launch State 1: Estimate Apogee
+                    // Apogee at < 5 m/s^2
+                    if (sensor_data.acc_linear_total_avg < 5) {
+                        state = 4;
 					}
 					break;
-				case 1:
-					//Launch State 1: Detecting Apogee
-					//Check if the acceleration reaches
-					if (acc_linear[0] + acc_linear[1] + acc_linear[2] > 0) {
-						//Acceleration is positive, go to Launch State 2
-						launch_state = 2;
-					}
-					break;
-				case 2:
-					//Launch State 2: Detecting Apogee
-					//If 3 second average acceleration is less than 2.5g, detected cruise
-					if (three_sec_avg_acc < 2.5) {
-						//Acceleration is less than 2.5g, go to Launch State 3
-						launch_state = 3;
-					}
-					break;
-
 			}
-			
-			if (digitalRead(BUTTON_PIN) == HIGH) {
-				//Button is still pressed, go to state 4
-				state = 4;
-			}
-
-			break;
 		case 4:
 			//State 4: Fire Ejection Charge 1
-			
-			if (digitalRead(BUTTON_PIN) == HIGH) {
-				//Button is still pressed, go to state 5
-				state = 5;
-			}
-
+            digitalWrite(PY1, HIGH);
+			state = 5;
+            int time_at_EjectionCharge1 = millis();
 			break;
 		case 5:
 			//State 5: Check if the rocket is descelerating
-			
-			if (digitalRead(BUTTON_PIN) == HIGH) {
-				//Button is still pressed, go
+            //Check if 2 second has passed since ejection charge 1
+            if (millis() - time_at_EjectionCharge1 > 2000) {
+                //2 seconds have passed, turn off ejection charge 1
+                digitalWrite(PY1, LOW);
+                //Check if the rocket is descelerating
+                if (sensor_data.acc_linear_total_avg < 5) {
+                    //Rocket is not descelerating, go to state 6
+                    state = 6;
+                }
+                else
+                {
+                    //Rocket is descelerating, go to state 7
+                    state = 7;
+                }
+				break;
 			}
+            break;
 		case 6:
 			//State 6: Fire Ejection Charge 2
-			
+            digitalWrite(PY2, HIGH);
+            state = 7;
+            int time_at_EjectionCharge2 = millis();
+			break;
 		case 7:
-			//State 7: Data Preservation + Landing Detect
+			//State 7: Data Preservation
 			//Close file
+            dataFile.close();
 			//Start new file
+            dataFile = SD.open("data_after.csv", FILE_WRITE);
+            state = 8;
+            break;
 		case 8:
-			//State 8: Beep for 10 minutes
-
+			//State 8: Landing Detect
+            //Check if 1 second has passed since ejection charge 2
+            if (millis() - time_at_EjectionCharge2 > 1000) {
+				//1 second has passed, turn off ejection charge 2
+				digitalWrite(PY2, LOW);
+			}
+            //Check if the acceleration < 1 m/s^2
+            if (acc_linear_total_avg < 1) {
+				//Landed, go to state 9
+                int time_at_landing = millis();
+				state = 9;
+			}
+            break;
+        case 9:
+			//State 9: Beep for 20 minutes
+            //Close file
+            dataFile.close();
+            while (millis() - time_at_landing < 1200000) {
+				tone(BUZZER, 1000);
+				delay(50);
+				noTone(BUZZER);
+				delay(50);
+			}
 	}
 }
 
