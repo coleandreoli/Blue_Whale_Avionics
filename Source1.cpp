@@ -1,7 +1,9 @@
-#include <Adafruit_BNO08x.h>
+#include <Wire.h>
 #include <SD.h>
 #include <SPI.h>
-
+#include <Adafruit_BNO08x.h>
+#include <Adafruit_Sensor.h>
+#include "Adafruit_BMP3XX.h"
 
 #define BNO08X_RESET -1
 #define PY1 2
@@ -26,6 +28,11 @@ struct {
 
 int state = 0;
 int launch_state = 0;
+int time_at_launch;
+int time_at_apogee;
+int time_at_landing;
+int time_at_EjectionCharge1;
+int time_at_EjectionCharge2;
 File dataFile;
 
 void setup() {
@@ -58,7 +65,7 @@ void setup() {
     // put your setup code here, to run once:
     pinMode(PY1, OUTPUT);
     pinMode(PY2, OUTPUT);
-    pinMode(PIN_SWITCH, INPUT);
+    pinMode(PIN_SWITCH, INPUT_PULLUP);
     pinMode(BUZZER, OUTPUT);
 
     //Open a new file
@@ -86,7 +93,7 @@ void setReports(void) {
 }
 
 void write_sensor_data() {
-    Serial.println("write_sensor_data");
+    //Serial.println("write_sensor_data");
     if (dataFile) {
         // Append values to the 'out' string with commas
         String out = String(sensor_data.time) + ","
@@ -105,7 +112,11 @@ void write_sensor_data() {
             + String(sensor_data.rotation_vector[0]) + ","
             + String(sensor_data.rotation_vector[1]) + ","
             + String(sensor_data.rotation_vector[2]) + ","
-            + String(sensor_data.rotation_vector[3]);
+            + String(sensor_data.rotation_vector[3]) + ","
+            + String(sensor_data.acc_linear_total) + ","
+            + String(sensor_data.acc_linear_total_avg) + ","
+            + String(state) + ","
+            + String(launch_state);
 
         // Write the 'out' string to the file
         dataFile.println(out);
@@ -123,6 +134,7 @@ void update_sensor_data() {
     if (!bno08x.getSensorEvent(&sensorValue)) {
         return;
     }
+    //Serial.println("update_sensor_data");
     sensor_data.time = millis();
     switch (sensorValue.sensorId) {
     case SH2_ACCELEROMETER:
@@ -182,145 +194,160 @@ void loop() {
 
     //Write sensor data to SD card if state > 0 and != 9
     if (state > 0 && state != 9) {
-		write_sensor_data();
-	}
-	//State Machine
-	switch (state) {
-		case 0:
-			//State 0: Idle
-			//Check if the button is pressed
-			if (1 == 1) {
-				//Button is pressed, go to state 1
-                delay(1000);
-				state = 1;
-			}
-			break;
-		case 1:
-			//State 1: Armed
-			//Check if the button is still pressed
-			if (1 == 1) {
-				//Button is still pressed, go to state 2
-				state = 2;
+        write_sensor_data();
+    }
+    //State Machine
+    switch (state) {
+    case 0:
+        //State 0: Idle
+        //Check if the button is pressed
+        if (digitalRead(PIN_SWITCH) == 0) {
+            //Button is pressed, go to state 1
+            delay(1000);
+            state = 1;
+            Serial.println("Idle > State 1");
+        }
+        break;
+    case 1:
+        //State 1: Armed
+        //Check if the button is still pressed
+        if (digitalRead(PIN_SWITCH) == 0) {
+            //Beep 3 times to indicate that the rocket is armed
+            tone(BUZZER, 1000);
+            delay(50);
+            noTone(BUZZER);
+            delay(50);
+            tone(BUZZER, 1000);
+            delay(50);
+            noTone(BUZZER);
+            delay(50);
+            tone(BUZZER, 1000);
+            delay(50);
+            noTone(BUZZER);
 
-				//Beep 3 times to indicate that the rocket is armed
-                tone(BUZZER, 1000);
-                delay(50);
-                noTone(BUZZER);
-                delay(50);
-                tone(BUZZER, 1000);
-                delay(50);
-                noTone(BUZZER);
-                delay(50);
-                tone(BUZZER, 1000);
-                delay(50);
-                noTone(BUZZER);
-                
-				//Start Timer
-				int time_at_launch = millis();
-                break;
-			}
-			else {
-				//Button is not pressed anymore, go back to state 0
-				state = 0;
-				//One long Beep to indicate that the rocket is not armed
-                tone(BUZZER, 400);
-				delay(1000);
-                noTone(BUZZER);
-			}
-			break;
-		case 2:
-			//State 2: Launch Detect
-			if sensor_data.acc_linear_total_avg > 20 {
-				//Launch Detected, go to state 3
-				state = 3;
-			}
+            //Start Timer
+            time_at_launch = millis();
+
+            //Button is still pressed, go to state 2
+            state = 2;
+            Serial.println("Armed > State 2");
             break;
-		case 3:
-			//State 3: Detecting Apogee
-			//Check if 16 seconds have passed
-			if (milis() - time_at_launch > 16000) {
-				//16 seconds have passed, go to state 4
-				state = 4;
-				break;
-			}
-			switch (launch_state) {
-				case 0:
-					//Launch State 0: No control for 5 seconds
-                    if (time_at_launch - sensor_data.time > 5000) {
-                        launch_state = 1;
-					}
-                    break;
-                case 1:
-					//Launch State 1: Estimate Apogee
-                    // Apogee at < 5 m/s^2
-                    if (sensor_data.acc_linear_total_avg < 5) {
-                        state = 4;
-					}
-					break;
-			}
-		case 4:
-			//State 4: Fire Ejection Charge 1
-            digitalWrite(PY1, HIGH);
-			state = 5;
-            int time_at_EjectionCharge1 = millis();
-			break;
-		case 5:
-			//State 5: Check if the rocket is descelerating
-            //Check if 2 second has passed since ejection charge 1
-            if (millis() - time_at_EjectionCharge1 > 2000) {
-                //2 seconds have passed, turn off ejection charge 1
-                digitalWrite(PY1, LOW);
-                //Check if the rocket is descelerating
-                if (sensor_data.acc_linear_total_avg < 5) {
-                    //Rocket is not descelerating, go to state 6
-                    state = 6;
-                }
-                else
-                {
-                    //Rocket is descelerating, go to state 7
-                    state = 7;
-                }
-				break;
-			}
+        }
+        else
+        {
+            //Button is not pressed anymore, go back to state 0
+            state = 0;
+            Serial.println("Unarmed > State 0");
+            //One long Beep to indicate that the rocket is not armed
+            tone(BUZZER, 400);
+            delay(1000);
+            noTone(BUZZER);
+        }
+        break;
+    case 2:
+        //State 2: Launch Detect
+        if (sensor_data.acc_linear_total_avg > 20) {
+            //Launch Detected, go to state 3
+            time_at_launch = millis();
+            state = 3;
+            Serial.println("Launch Detected > State 3");
+        }
+        break;
+    case 3:
+        //State 3: Detecting Apogee
+        //Check if 16 seconds have passed
+        if (millis() - time_at_launch > 16000) {
+            //16 seconds have passed, go to state 4
+            Serial.println("16 seconds have passed > State 4");
+            state = 4;
             break;
-		case 6:
-			//State 6: Fire Ejection Charge 2
-            digitalWrite(PY2, HIGH);
-            state = 7;
-            int time_at_EjectionCharge2 = millis();
-			break;
-		case 7:
-			//State 7: Data Preservation
-			//Close file
-            dataFile.close();
-			//Start new file
-            dataFile = SD.open("data_after.csv", FILE_WRITE);
-            state = 8;
+        }
+        if (launch_state == 0) {
+            //Launch State 0: No control for 5 seconds
+            if (millis() - time_at_launch > 5000) {
+                launch_state = 1;
+                Serial.println("5 seconds after Launch > Launch State 1");
+            }
+        }
+        else
+        {
+            //Launch State 1: Estimate Apogee
+            // Apogee at < 5 m/s^2
+            if (sensor_data.acc_linear_total_avg < 5) {
+                Serial.println("Apogee detected > State 4");
+                state = 4;
+            }
+        }
+        break;
+    case 4:
+        //State 4: Fire Ejection Charge 1
+        digitalWrite(PY1, HIGH);
+        state = 5;
+        Serial.println("Ejection Charge 1 fired > State 5");
+        time_at_EjectionCharge1 = millis();
+        break;
+    case 5:
+        //State 5: Check if the rocket is descelerating
+        //Check if 2 second has passed since ejection charge 1
+        if (millis() - time_at_EjectionCharge1 > 2000) {
+            //2 seconds have passed, turn off ejection charge 1
+            digitalWrite(PY1, LOW);
+            //Check if the rocket is descelerating
+            if (sensor_data.acc_linear_total_avg < 5) {
+                //Rocket is not descelerating, go to state 6
+                state = 6;
+                Serial.println("Rocket is not descelerating > State 6");
+            }
+            else
+            {
+                //Rocket is descelerating, go to state 7
+                state = 7;
+                Serial.println("Rocket is descelerating > State 7");
+            }
             break;
-		case 8:
-			//State 8: Landing Detect
-            //Check if 1 second has passed since ejection charge 2
-            if (millis() - time_at_EjectionCharge2 > 1000) {
-				//1 second has passed, turn off ejection charge 2
-				digitalWrite(PY2, LOW);
-			}
-            //Check if the acceleration < 1 m/s^2
-            if (acc_linear_total_avg < 1) {
-				//Landed, go to state 9
-                int time_at_landing = millis();
-				state = 9;
-			}
-            break;
-        case 9:
-			//State 9: Beep for 20 minutes
-            //Close file
-            dataFile.close();
-            while (millis() - time_at_landing < 1200000) {
-				tone(BUZZER, 1000);
-				delay(50);
-				noTone(BUZZER);
-				delay(50);
-			}
-	}
+        }
+        break;
+    case 6:
+        //State 6: Fire Ejection Charge 2
+        digitalWrite(PY2, HIGH);
+        state = 7;
+        Serial.println("Ejection Charge 2 fired > State 7");
+        time_at_EjectionCharge2 = millis();
+        break;
+    case 7:
+        //State 7: Data Preservation
+        //Close file
+        dataFile.close();
+        //Start new file
+        dataFile = SD.open("data_after.csv", FILE_WRITE);
+        state = 8;
+        Serial.println("Data Preservation > State 8");
+        break;
+    case 8:
+        //State 8: Landing Detect
+        //Check if 1 second has passed since ejection charge 2
+        if (millis() - time_at_EjectionCharge2 > 1000) {
+            //1 second has passed, turn off ejection charge 2
+            digitalWrite(PY2, LOW);
+        }
+        //Check if the acceleration < 1 m/s^2
+        if (sensor_data.acc_linear_total_avg < 1) {
+            //Landed, go to state 9
+            time_at_landing = millis();
+            state = 9;
+            Serial.println("Landed > State 9");
+        }
+        break;
+    case 9:
+        //State 9: Beep for 20 minutes
+        //Close file
+        dataFile.close();
+        while (millis() - time_at_landing < 1200000) {
+            tone(BUZZER, 200);
+            delay(500);
+            noTone(BUZZER);
+            delay(500);
+        }
+    }
 }
 
