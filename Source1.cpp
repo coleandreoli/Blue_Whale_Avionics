@@ -193,7 +193,7 @@ void loop() {
     update_sensor_data();
 
     //Write sensor data to SD card if state > 0 and != 9
-    if (state > 0 && state != 9) {
+    if (state > 0 && state != 10) {
         write_sensor_data();
     }
     //State Machine
@@ -225,9 +225,6 @@ void loop() {
             delay(50);
             noTone(BUZZER);
 
-            //Start Timer
-            time_at_launch = millis();
-
             //Button is still pressed, go to state 2
             state = 2;
             Serial.println("Armed > State 2");
@@ -251,6 +248,15 @@ void loop() {
             time_at_launch = millis();
             state = 3;
             Serial.println("Launch Detected > State 3");
+        }
+
+        if (digitalRead(PIN_SWITCH) == 1) {
+            state = 1;
+            Serial.println("Unarmed > State 1");
+            //One long Beep to indicate that the rocket is not armed
+            tone(BUZZER, 400);
+            delay(1000);
+            noTone(BUZZER);
         }
         break;
     case 3:
@@ -301,7 +307,7 @@ void loop() {
             else
             {
                 //Rocket is descelerating, go to state 7
-                state = 7;
+                state = 8;
                 Serial.println("Rocket is descelerating > State 7");
             }
             break;
@@ -315,21 +321,24 @@ void loop() {
         time_at_EjectionCharge2 = millis();
         break;
     case 7:
-        //State 7: Data Preservation
-        //Close file
-        dataFile.close();
-        //Start new file
-        dataFile = SD.open("data_after.csv", FILE_WRITE);
-        state = 8;
-        Serial.println("Data Preservation > State 8");
-        break;
-    case 8:
-        //State 8: Landing Detect
+        //State 7: 1 second after Ejection Charge 2
         //Check if 1 second has passed since ejection charge 2
         if (millis() - time_at_EjectionCharge2 > 1000) {
             //1 second has passed, turn off ejection charge 2
             digitalWrite(PY2, LOW);
         }
+        break;
+    case 8:
+        //State 8: Data Preservation
+        //Close file
+        dataFile.close();
+        //Start new file
+        dataFile = SD.open("data_after.csv", FILE_WRITE);
+        state = 9;
+        Serial.println("Data Preservation > State 8");
+        break;
+    case 9:
+        //State 9: Detecting Landing
         //Check if the acceleration < 1 m/s^2
         if (sensor_data.acc_linear_total_avg < 1) {
             //Landed, go to state 9
@@ -338,7 +347,7 @@ void loop() {
             Serial.println("Landed > State 9");
         }
         break;
-    case 9:
+    case 10:
         //State 9: Beep for 20 minutes
         //Close file
         dataFile.close();
