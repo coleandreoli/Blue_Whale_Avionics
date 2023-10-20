@@ -10,6 +10,8 @@
 #define PY2 3
 #define PIN_SWITCH 4
 #define BUZZER 7
+#define SEALEVELPRESSURE_HPA (1013.25)
+Adafruit_BMP3XX bmp;
 Adafruit_BNO08x bno08x(BNO08X_RESET);
 sh2_SensorValue_t sensorValue;
 
@@ -24,10 +26,14 @@ struct {
     float acc_linear_total; 	// sqrt(ax^2 + ay^2 + az^2)
     float acc_linear_total_samples[100];  //array of 100 samples
     float acc_linear_total_avg; // average of the last 100 linear_total values
+    float pressure;
+    float temperature;
+    float altitude;
 }sensor_data;
 
 int state = 0;
 int launch_state = 0;
+int record_state = 0;
 int time_at_launch;
 int time_at_apogee;
 int time_at_landing;
@@ -37,11 +43,6 @@ File dataFile;
 
 void setup() {
     Serial.begin(115200);
-    //while (!Serial)
-    //  delay(10); // will pause Zero, Leonardo, etc until serial console opens
-
-    Serial.println("Adafruit BNO08x test!");
-
     // Try to initialize!
     if (!bno08x.begin_I2C()) {
         // if (!bno08x.begin_UART(&Serial1)) {  // Requires a device with > 300 byte
@@ -53,15 +54,30 @@ void setup() {
     }
     Serial.println("BNO08x Found!");
 
+
+    if (!bmp.begin_I2C()) {   // hardware I2C mode, can pass in address & alt Wire
+        //if (! bmp.begin_SPI(BMP_CS)) {  // hardware SPI mode  
+        //if (! bmp.begin_SPI(BMP_CS, BMP_SCK, BMP_MISO, BMP_MOSI)) {  // software SPI mode
+        Serial.println("Could not find a valid BMP3 sensor, check wiring!");
+        while (1);
+    }
+    Serial.println("BMP3 Found!");
+
     setReports();
 
-    Serial.println("Reading events");
+    // Set up oversampling and filter initialization
+    // Set for "Drone" settings, see datasheet for details
+    bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_4X);
+    bmp.setPressureOversampling(BMP3_OVERSAMPLING_8X);
+    bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+    bmp.setOutputDataRate(BMP3_ODR_50_HZ);
+
 
     if (!SD.begin(BUILTIN_SDCARD)) {
         Serial.println("SD card initialization failed!");
         while (1);
     }
-
+    Serial.println("SD Found!");
     // put your setup code here, to run once:
     pinMode(PY1, OUTPUT);
     pinMode(PY2, OUTPUT);
@@ -70,6 +86,7 @@ void setup() {
 
     //Open a new file
     dataFile = SD.open("data.csv", FILE_WRITE);
+    Serial.println("Completed Setup");
 
 }
 
@@ -94,9 +111,10 @@ void setReports(void) {
 
 void write_sensor_data() {
     //Serial.println("write_sensor_data");
+    String out;
     if (dataFile) {
         // Append values to the 'out' string with commas
-        String out = String(sensor_data.time) + ","
+        out = String(sensor_data.time) + ","
             + String(sensor_data.accelerometer[0]) + ","
             + String(sensor_data.accelerometer[1]) + ","
             + String(sensor_data.accelerometer[2]) + ","
@@ -117,17 +135,20 @@ void write_sensor_data() {
             + String(sensor_data.acc_linear_total_avg) + ","
             + String(state) + ","
             + String(launch_state);
-
-        // Write the 'out' string to the file
-        dataFile.println(out);
+    }
+    //write BMP data if state = 1
+    if (record_state == 1) {
+        out = out + "," + String(sensor_data.pressure) + "," + String(sensor_data.temperature) + "," + String(sensor_data.altitude);
     }
 
+    // Write the 'out' string to the file
+    dataFile.println(out);
 }
 
 //update sensor data
 void update_sensor_data() {
     if (bno08x.wasReset()) {
-        Serial.print("sensor was reset ");
+        Serial.println("sensor was reset ");
         setReports();
     }
 
@@ -137,37 +158,37 @@ void update_sensor_data() {
     //Serial.println("update_sensor_data");
     sensor_data.time = millis();
     switch (sensorValue.sensorId) {
-    case SH2_ACCELEROMETER:
-        //update accelerometer data
-        sensor_data.accelerometer[0] = sensorValue.un.accelerometer.x;
-        sensor_data.accelerometer[1] = sensorValue.un.accelerometer.y;
-        sensor_data.accelerometer[2] = sensorValue.un.accelerometer.z;
-        break;
-    case SH2_MAGNETIC_FIELD_CALIBRATED:
-        //update magnetometer data
-        sensor_data.magnetometer[0] = sensorValue.un.magneticField.x;
-        sensor_data.magnetometer[1] = sensorValue.un.magneticField.y;
-        sensor_data.magnetometer[2] = sensorValue.un.magneticField.z;
-        break;
-    case SH2_GYROSCOPE_CALIBRATED:
-        //update gyroscope data
-        sensor_data.gyroscope[0] = sensorValue.un.gyroscope.x;
-        sensor_data.gyroscope[1] = sensorValue.un.gyroscope.y;
-        sensor_data.gyroscope[2] = sensorValue.un.gyroscope.z;
-        break;
-    case SH2_LINEAR_ACCELERATION:
-        //update linear acceleration data
-        sensor_data.acc_linear[0] = sensorValue.un.linearAcceleration.x;
-        sensor_data.acc_linear[1] = sensorValue.un.linearAcceleration.y;
-        sensor_data.acc_linear[2] = sensorValue.un.linearAcceleration.z;
-        break;
-    case SH2_ROTATION_VECTOR:
-        //update rotation vector data
-        sensor_data.rotation_vector[0] = sensorValue.un.rotationVector.real;
-        sensor_data.rotation_vector[1] = sensorValue.un.rotationVector.i;
-        sensor_data.rotation_vector[2] = sensorValue.un.rotationVector.j;
-        sensor_data.rotation_vector[3] = sensorValue.un.rotationVector.k;
-        break;
+        case SH2_ACCELEROMETER:
+            //update accelerometer data
+            sensor_data.accelerometer[0] = sensorValue.un.accelerometer.x;
+            sensor_data.accelerometer[1] = sensorValue.un.accelerometer.y;
+            sensor_data.accelerometer[2] = sensorValue.un.accelerometer.z;
+            break;
+        case SH2_MAGNETIC_FIELD_CALIBRATED:
+            //update magnetometer data
+            sensor_data.magnetometer[0] = sensorValue.un.magneticField.x;
+            sensor_data.magnetometer[1] = sensorValue.un.magneticField.y;
+            sensor_data.magnetometer[2] = sensorValue.un.magneticField.z;
+            break;
+        case SH2_GYROSCOPE_CALIBRATED:
+            //update gyroscope data
+            sensor_data.gyroscope[0] = sensorValue.un.gyroscope.x;
+            sensor_data.gyroscope[1] = sensorValue.un.gyroscope.y;
+            sensor_data.gyroscope[2] = sensorValue.un.gyroscope.z;
+            break;
+        case SH2_LINEAR_ACCELERATION:
+            //update linear acceleration data
+            sensor_data.acc_linear[0] = sensorValue.un.linearAcceleration.x;
+            sensor_data.acc_linear[1] = sensorValue.un.linearAcceleration.y;
+            sensor_data.acc_linear[2] = sensorValue.un.linearAcceleration.z;
+            break;
+        case SH2_ROTATION_VECTOR:
+            //update rotation vector data
+            sensor_data.rotation_vector[0] = sensorValue.un.rotationVector.real;
+            sensor_data.rotation_vector[1] = sensorValue.un.rotationVector.i;
+            sensor_data.rotation_vector[2] = sensorValue.un.rotationVector.j;
+            sensor_data.rotation_vector[3] = sensorValue.un.rotationVector.k;
+            break;
     }
 
     //Calculate total linear acceleration
@@ -186,8 +207,17 @@ void update_sensor_data() {
         sensor_data.acc_linear_total_avg += sensor_data.acc_linear_total_samples[i];
     }
     sensor_data.acc_linear_total_avg = sensor_data.acc_linear_total_avg / 100;
+    ////update BMP data after recovery sequence
+    if (record_state == 1) {
+        
+        //C
+        sensor_data.temperature = bmp.temperature;
+        //Pa
+        sensor_data.pressure = bmp.pressure;
+        //m
+        sensor_data.altitude = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+    }
 }
-
 void loop() {
     //Update sensor data
     update_sensor_data();
@@ -227,6 +257,7 @@ void loop() {
 
             //Button is still pressed, go to state 2
             state = 2;
+            record_state = 1;
             Serial.println("Armed > State 2");
             break;
         }
@@ -235,9 +266,13 @@ void loop() {
             //Button is not pressed anymore, go back to state 0
             state = 0;
             Serial.println("Unarmed > State 0");
-            //One long Beep to indicate that the rocket is not armed
-            tone(BUZZER, 400);
-            delay(1000);
+            //Descending chirp to indicate that the rocket is not armed
+            tone(BUZZER, 1200);
+            delay(50);
+            tone(BUZZER, 800);
+            delay(50);
+            tone(BUZZER, 600);
+            delay(50);
             noTone(BUZZER);
         }
         break;
@@ -248,14 +283,19 @@ void loop() {
             time_at_launch = millis();
             state = 3;
             Serial.println("Launch Detected > State 3");
+            tone(BUZZER, 400);
         }
 
         if (digitalRead(PIN_SWITCH) == 1) {
             state = 1;
             Serial.println("Unarmed > State 1");
-            //One long Beep to indicate that the rocket is not armed
-            tone(BUZZER, 400);
-            delay(1000);
+            //Descending chirp to indicate that the rocket is not armed
+            tone(BUZZER, 1200);
+            delay(50);
+            tone(BUZZER, 800);
+            delay(50);
+            tone(BUZZER, 600);
+            delay(50);
             noTone(BUZZER);
         }
         break;
@@ -287,6 +327,7 @@ void loop() {
         break;
     case 4:
         //State 4: Fire Ejection Charge 1
+        noTone(BUZZER);
         digitalWrite(PY1, HIGH);
         state = 5;
         Serial.println("Ejection Charge 1 fired > State 5");
@@ -306,9 +347,9 @@ void loop() {
             }
             else
             {
-                //Rocket is descelerating, go to state 7
+                //Rocket is descelerating, go to state 8
                 state = 8;
-                Serial.println("Rocket is descelerating > State 7");
+                Serial.println("Rocket is descelerating > State 8");
             }
             break;
         }
@@ -326,6 +367,7 @@ void loop() {
         if (millis() - time_at_EjectionCharge2 > 1000) {
             //1 second has passed, turn off ejection charge 2
             digitalWrite(PY2, LOW);
+            state = 8;
         }
         break;
     case 8:
@@ -343,14 +385,15 @@ void loop() {
         if (sensor_data.acc_linear_total_avg < 1) {
             //Landed, go to state 9
             time_at_landing = millis();
-            state = 9;
-            Serial.println("Landed > State 9");
+            state = 10;
+            Serial.println("Landed > State 10");
         }
         break;
     case 10:
         //State 9: Beep for 20 minutes
         //Close file
         dataFile.close();
+        Serial.println("Beeping for 20 mins");
         while (millis() - time_at_landing < 1200000) {
             tone(BUZZER, 200);
             delay(500);
