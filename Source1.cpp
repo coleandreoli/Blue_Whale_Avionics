@@ -236,6 +236,9 @@ void loop() {
             delay(1000);
             state = 1;
             Serial.println("Idle > State 1");
+            //Capture an initial altitude reading
+            //Turn on BMP data recording
+            record_state = 1;
         }
         break;
     case 1:
@@ -257,12 +260,11 @@ void loop() {
 
             //Button is still pressed, go to state 2
             state = 2;
-            record_state = 1;
             Serial.println("Armed > State 2");
-            break;
-        }
-        else
-        {
+
+            //Turn off BMP data recording
+            record_state = 0;
+        }else{
             //Button is not pressed anymore, go back to state 0
             state = 0;
             Serial.println("Unarmed > State 0");
@@ -275,6 +277,7 @@ void loop() {
             delay(50);
             noTone(BUZZER);
         }
+
         break;
     case 2:
         //State 2: Launch Detect
@@ -282,6 +285,8 @@ void loop() {
             //Launch Detected, go to state 3
             time_at_launch = millis();
             state = 3;
+            //Turn on BMP data recording
+            record_state = 1;
             Serial.println("Launch Detected > State 3");
             tone(BUZZER, 400);
         }
@@ -298,6 +303,7 @@ void loop() {
             delay(50);
             noTone(BUZZER);
         }
+
         break;
     case 3:
         //State 3: Detecting Apogee
