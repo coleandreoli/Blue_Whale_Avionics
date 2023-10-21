@@ -236,9 +236,6 @@ void loop() {
             delay(1000);
             state = 1;
             Serial.println("Idle > State 1");
-            //Capture an initial altitude reading
-            //Turn on BMP data recording
-            record_state = 1;
         }
         break;
     case 1:
@@ -261,12 +258,11 @@ void loop() {
             //Button is still pressed, go to state 2
             state = 2;
             Serial.println("Armed > State 2");
-
-            //Turn off BMP data recording
-            record_state = 0;
         }else{
             //Button is not pressed anymore, go back to state 0
             state = 0;
+            //Turn off BMP data recording
+            record_state = 0;
             Serial.println("Unarmed > State 0");
             //Descending chirp to indicate that the rocket is not armed
             tone(BUZZER, 1200);
@@ -293,6 +289,8 @@ void loop() {
 
         if (digitalRead(PIN_SWITCH) == 1) {
             state = 1;
+            //Turn off BMP data recording
+            record_state = 0;
             Serial.println("Unarmed > State 1");
             //Descending chirp to indicate that the rocket is not armed
             tone(BUZZER, 1200);
